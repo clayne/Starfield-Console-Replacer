@@ -43,7 +43,7 @@ extern void TraceImpl(const char* const filename, const char* const func, int li
 #include "../imgui/imgui.h"
 
 
-#define BETTERCONSOLE_VERSION "1.4.0"
+#define BETTERCONSOLE_VERSION "1.4.1"
 
 // --------------------------------------------------------------------
 // ---- Change these offsets for each game update                  ----
