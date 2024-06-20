@@ -6,7 +6,6 @@
 
 // Console print interface:
 //48 89 5c 24 ?? 48 89 6c 24 ?? 48 89 74 24 ?? 57 b8 30 10 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 49 - new sig with 1 match
-//48 89 5c 24 ?? 48 89 6c 24 ?? 48 89 74 24 ?? 57 b8 30 10 -- the 0x1030 stack size might be too unique
 /*
   undefined4 uVar1;
   int iVar2;
@@ -40,9 +39,6 @@ pcVar15 = "float fresult\nref refr\nset refr to GetSelectedRef\nset fresult to "
 
 */
 
-// Forced offsets 1.12.32
-#define OFFSET_CONSOLE_PRINT 0x29cd9b8
-#define OFFSET_CONSOLE_RUN 0x29c7f44
 
 #define OUTPUT_FILE_PATH "BetterConsoleOutput.txt"
 #define HISTORY_FILE_PATH "BetterConsoleHistory.txt"
@@ -82,13 +78,15 @@ static LogBufferHandle HistoryHandle;
 static std::vector<uint32_t> SearchOutputLines{};
 static std::vector<uint32_t> SearchHistoryLines{};
 
-static uint32_t NumHotkeys = 0;
 static RegistrationHandle ModHandle = 0;
 
 struct Command {
         char name[32];
         char data[512];
-} HotkeyCommands[NUM_HOTKEY_COMMANDS];
+} static HotkeyCommands[NUM_HOTKEY_COMMANDS];
+
+static bool PauseGameOnConsoleOpen = false;
+static bool FirstFrameRendered = true;
 
 
 static void forward_to_old_consoleprint(void* consolemgr, const char* fmt, ...) {
@@ -120,19 +118,65 @@ static void console_run(void* consolemgr, char* cmd) {
         }
 }
 
+
+static void run_comand(const char* command) {
+        char cmd[512]; // max console command length
+        snprintf(cmd, sizeof(cmd), "%s", command);
+        console_run(NULL, cmd);
+}
+
+
+static void SetGamePaused(bool paused) {
+        // SOF pauses the game after one frame
+        run_comand("StepOneFrame");
+
+        if (!paused) {
+                // now that we know the game is paused
+                // we can toggle the game pause to resume
+                run_comand("ToggleGamePause");
+        }
+}
+
 static void draw_console_window(void* imgui_context) {
         (void)imgui_context;
 
-        static bool GameState = true;
-        static const char* GameStates[] = { "Paused", "Running" };
-        if (ImGui::Button(GameStates[GameState])) {
-                char tgp[] = "ToggleGamePause";
-                console_run(NULL, tgp);
-                GameState = !GameState;
+        // Provide a message to the user about the state of the application without triggering an assert
+        // going forward, non-fatal asserts should be the default. I already have the ui working in a
+        // stable manner, i should use it to provide feedback not crash the whole game
+        if (!(OLD_ConsolePrintV && OLD_ConsoleRun)) {
+                if (!OLD_ConsolePrintV) {
+                        SimpleDraw->Text("Could not hook console print function, incompatible mod loaded or game update incompatible");
+                }
+                if (!OLD_ConsoleRun) {
+                        SimpleDraw->Text("Could not hook console execute function, incompatible mod loaded or game update incompatible");
+                }
+
+                SimpleDraw->Text("BetterConsole version %s is known to be compatible with game version %u.%u.%u", BETTERCONSOLE_VERSION, (GAME_VERSION >> 24) & 0xFF, (GAME_VERSION >> 16) & 0xFF, (GAME_VERSION>>4) & 0xFFF);
+                return;
+        }
+
+        static bool GameisPaused = false;
+        if (GameisPaused) {
+                if(ImGui::Button("Unpause Game")) {
+                        SetGamePaused(false);
+                        GameisPaused = false;
+                }
+        }
+        else {
+                if(ImGui::Button("Pause Game")) {
+                        SetGamePaused(true);
+                        GameisPaused = true;
+                }
         }
         ImGui::SameLine();
-        
-        ImGui::SetNextItemWidth(-(ImGui::GetFontSize() * 20));
+
+        if (FirstFrameRendered && PauseGameOnConsoleOpen) {
+                GameisPaused = true;
+                FirstFrameRendered = false;
+                SetGamePaused(true);
+        }
+
+        ImGui::SetNextItemWidth(-(ImGui::GetFontSize() * 11.5f));
         if (UpdateFocus) {
                 ImGui::SetKeyboardFocusHere();
                 UpdateFocus = false;
@@ -145,6 +189,10 @@ static void draw_console_window(void* imgui_context) {
                         IOBuffer[0] = 0;
                         UpdateFocus = true;
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear")) {
+                        LogBuffer->Clear(OutputHandle);
+                }
                 SimpleDraw->ShowLogBuffer(OutputHandle, UpdateScroll);
         }
         else if (CommandMode == InputMode::SearchOutput) {
@@ -156,6 +204,10 @@ static void draw_console_window(void* imgui_context) {
                                 }
                         }
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear")) {
+                        LogBuffer->Clear(OutputHandle);
+                }
                 SimpleDraw->ShowFilteredLogBuffer(OutputHandle, SearchOutputLines.data(), (uint32_t)SearchOutputLines.size(), UpdateScroll);
         }
         else if (CommandMode == InputMode::SearchHistory) {
@@ -166,6 +218,10 @@ static void draw_console_window(void* imgui_context) {
                                         SearchHistoryLines.push_back(i);
                                 }
                         }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear")) {
+                        LogBuffer->Clear(HistoryHandle);
                 }
                 SimpleDraw->ShowFilteredLogBuffer(HistoryHandle, SearchHistoryLines.data(), (uint32_t)SearchHistoryLines.size(), UpdateScroll);
         }
@@ -254,10 +310,25 @@ static bool strcasestr(const char* s, const char* find) {
 
 static void CALLBACK_console_settings(enum ConfigAction action) {
         char keyname[32];
+
+        Config->ConfigBool(action, "Pause Game On Console Open", &PauseGameOnConsoleOpen);
+
         for (uint32_t i = 0; i < 16; ++i) {
                 auto& hc = HotkeyCommands[i];
                 snprintf(keyname, sizeof(keyname), "Hotkey Command%u", i);
                 Config->ConfigString(action, keyname, hc.data, sizeof(hc.data));
+        }
+
+        // this is a side-channel attack on my own code,
+        // i do not yet have an events api for something
+        // like "yo, your mod just gained focus, you might want to do something"
+        // so i take advantage of the fact that config write happens when you close
+        // the ui, now the draw call will know next time the UI is opened
+        if (PauseGameOnConsoleOpen) {
+                if (action == ConfigAction_Write) {
+                        FirstFrameRendered = true;
+                        SetGamePaused(false);
+                }
         }
 }
 
@@ -297,40 +368,33 @@ extern void setup_console(const BetterAPI* api) {
         DEBUG("Hooking print function using AOB method");
         auto hook_print_aob = HookAPI->AOBScanEXE("48 89 5c 24 ?? 48 89 6c 24 ?? 48 89 74 24 ?? 57 b8 30 10 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 49");
         
-        if (!hook_print_aob) {
-                DEBUG("hook_print_aob AOB method failed, (incompatible mod or game update?)");
-                hook_print_aob = HookAPI->Relocate(OFFSET_CONSOLE_PRINT);
+        if (hook_print_aob) {
+                OLD_ConsolePrintV = (decltype(OLD_ConsolePrintV))HookAPI->HookFunction(
+                        (FUNC_PTR)hook_print_aob,
+                        (FUNC_PTR)console_print
+                );
         }
-
-        OLD_ConsolePrintV = (decltype(OLD_ConsolePrintV))HookAPI->HookFunction(
-                (FUNC_PTR)hook_print_aob,
-                (FUNC_PTR)console_print
-        );
 
         DEBUG("Hooking run function using AOB method");
         auto hook_run_aob = HookAPI->AOBScanEXE("48 8b c4 48 89 50 ?? 4c 89 40 ?? 4c 89 48 ?? 55 53 56 57 41 55 41 56 41 57 48 8d");
         
-        if (!hook_run_aob) {
-                DEBUG("hook_run_aob AOB method failed, (incompatible mod or game update?)");
-                hook_run_aob = HookAPI->Relocate(OFFSET_CONSOLE_RUN);
+        if (hook_run_aob) {
+                OLD_ConsoleRun = (decltype(OLD_ConsoleRun))HookAPI->HookFunction(
+                        (FUNC_PTR)hook_run_aob,
+                        (FUNC_PTR)console_run
+                );
         }
-
-        OLD_ConsoleRun = (decltype(OLD_ConsoleRun))HookAPI->HookFunction(
-                (FUNC_PTR)hook_run_aob,
-                (FUNC_PTR)console_run
-        );
 
         IOBuffer[0] = 0;
 }
 
 
-static void run_comand(char* command) {
-        console_run(NULL, command);
-}
+
 
 
 static constexpr struct console_api_t Console {
-        run_comand
+        run_comand,
+        SetGamePaused
 };
 
 extern constexpr const struct console_api_t* GetConsoleAPI() {
