@@ -10,6 +10,9 @@ typedef enum CallbackType {
         CALLBACKTYPE_DRAW,
         CALLBACKTYPE_CONFIG,
         CALLBACKTYPE_HOTKEY,
+        CALLBACKTYPE_ABOUT,
+
+        CALLBACKTYPE_COUNT
 } CallbackType;
 
 
@@ -17,6 +20,7 @@ typedef union CallbackFunction {
         DRAW_CALLBACK draw_callback;
         CONFIG_CALLBACK config_callback;
         HOTKEY_CALLBACK hotkey_callback;
+        DRAW_CALLBACK about_callback;
 } CallbackFunction;
 
 

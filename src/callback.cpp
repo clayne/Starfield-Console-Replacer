@@ -10,6 +10,7 @@ struct ModInfo {
         DRAW_CALLBACK draw_callback;
         CONFIG_CALLBACK config_callback;
         HOTKEY_CALLBACK hotkey_callback;
+        DRAW_CALLBACK about_callback;
 };
 
 
@@ -17,6 +18,7 @@ static std::vector<ModInfo> RegisteredMods{};
 static std::vector<RegistrationHandle> DrawHandles{};
 static std::vector<RegistrationHandle> ConfigHandles{};
 static std::vector<RegistrationHandle> HotkeyHandles{};
+static std::vector<RegistrationHandle> AboutHandles{};
 
 
 extern const RegistrationHandle* CallbackGetHandles(CallbackType type, uint32_t* out_count) {
@@ -36,6 +38,10 @@ extern const RegistrationHandle* CallbackGetHandles(CallbackType type, uint32_t*
         case CALLBACKTYPE_HOTKEY:
                 count = (uint32_t)HotkeyHandles.size();
                 ret = &HotkeyHandles[0];
+                break;
+        case CALLBACKTYPE_ABOUT:
+                count = (uint32_t)AboutHandles.size();
+                ret = &AboutHandles[0];
                 break;
         default:
                 DEBUG("Invalid callback type %d", type);
@@ -71,6 +77,9 @@ extern CallbackFunction CallbackGetCallback(CallbackType type, RegistrationHandl
                 break;
         case CALLBACKTYPE_HOTKEY:
                 ret.hotkey_callback = RegisteredMods[handle].hotkey_callback;
+                break;
+        case CALLBACKTYPE_ABOUT:
+                ret.about_callback = RegisteredMods[handle].about_callback;
                 break;
         default:
                 DEBUG("Invalid callback type %d", type);
@@ -116,6 +125,12 @@ static void RegisterHotkeyCallback(RegistrationHandle owner, HOTKEY_CALLBACK cal
         HotkeyHandles.push_back(owner);
 }
 
+static void RegisterAboutCallback(RegistrationHandle owner, DRAW_CALLBACK callback) {
+        ASSERT(owner < RegisteredMods.size());
+        RegisteredMods[owner].about_callback = callback;
+        AboutHandles.push_back(owner);
+}
+
 
 // This function is best fit next to the hotkey callback registration, but all of the data
 // is in the hotkeys.cpp file, so we forward the call to that function instead of trying to
@@ -136,7 +151,8 @@ static constexpr struct callback_api_t CallbackAPI {
         RegisterDrawCallback,
         RegisterConfigCallback,
         RegisterHotkeyCallback,
-        RequestHotkey
+        RequestHotkey,
+        RegisterAboutCallback
 };
 
 

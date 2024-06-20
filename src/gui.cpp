@@ -1,18 +1,21 @@
 #include "main.h"
 #include "gui.h"
 #include "hotkeys.h"
+#include "about_tab.h"
 
-// maybe more the shellopen stuff to a utility header?
-#include <Windows.h>
-#include <shellapi.h>
+
 
 
 extern void draw_gui() {
+        // Allow focus of first registered tab (usually betterconsole)
+        ImGuiTabItemFlags default_tab = ImGuiTabItemFlags_None;
+
         static bool once = false;
         if (!once) {
                 const auto screen = ImGui::GetIO().DisplaySize;
                 ImGui::SetNextWindowPos(ImVec2{ screen.x / 4, screen.y / 4 });
                 ImGui::SetNextWindowSize(ImVec2{ screen.x / 2 , screen.y / 2 });
+                default_tab = ImGuiTabItemFlags_SetSelected;
                 once = true;
         }
 
@@ -40,36 +43,9 @@ extern void draw_gui() {
                         draw_hotkeys_tab();
                         ImGui::EndTabItem();
                 }
-                if (ImGui::BeginTabItem("Help")) {
-                        if (ImGui::Button("NexusMods")) {
-                                ShellExecuteA(NULL, "open", "https://www.nexusmods.com/starfield/mods/3683", NULL, NULL, 1);
-                        }
-                        if (ImGui::Button("Reddit (not checked often)")) {
-                                ShellExecuteA(NULL, "open", "https://www.reddit.com/user/linuxversion/", NULL, NULL, 1);
-                        }
-                        if (ImGui::Button("Constellation by V2 (discord)")) {
-                                ShellExecuteA(NULL, "open", "https://discord.gg/v2-s-collections-1076179431195955290", NULL, NULL, 1);
-                        }
-                        if (ImGui::Button("Discord (not ready yet)")) {
-                                ImGui::OpenPopup("NoDiscordServer");
-                        }
-                        if (ImGui::BeginPopup("NoDiscordServer")) {
-                                char message[] = "Sorry, no discord server has been setup yet!\n"
-                                        "I wouldn't have the time to moderate it anyway.\n"
-                                        "But you can direct message me, my username is: linuxversion\n"
-                                        "If you installed this mod as part of the Constellation by V2 collection,\n"
-                                        "then you can report betterconsole issues on that discord server.";
-                                ImGui::Text(message);
-                                ImGui::EndPopup();
-                        }
-                        if (ImGui::Button("Open Log File")) {
-                                char path[260];
-                                ShellExecuteA(NULL, "open", GetPathInDllDir(path, "BetterConsoleLog.txt"), NULL, NULL, 1);
-                        }
-                        if (ImGui::Button("Open Config File")) {
-                                char path[260];
-                                ShellExecuteA(NULL, "open", GetPathInDllDir(path, "BetterConsoleConfig.txt"), NULL, NULL, 1);
-                        }
+                if (ImGui::BeginTabItem("About")) {
+                        // Implemented in about_tab.cpp
+                        draw_about_tab();
                         ImGui::EndTabItem();
                 }
                 ImGui::EndTabBar();
@@ -82,7 +58,8 @@ extern void draw_gui() {
         for (uint32_t i = 0; i < draw_count; ++i) {
                 const auto handle = draw_callback[i];
                 ImGui::PushID(handle);
-                if (ImGui::BeginTabItem(CallbackGetName(handle))) {
+                if (ImGui::BeginTabItem(CallbackGetName(handle), nullptr, default_tab)) {
+                        default_tab = ImGuiTabItemFlags_None;
                         CallbackGetCallback(CALLBACKTYPE_DRAW, handle).draw_callback(imgui_context);
                         ImGui::EndTabItem();
                 }
