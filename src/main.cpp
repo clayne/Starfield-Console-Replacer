@@ -12,6 +12,7 @@
 #include "std_api.h"
 #include "hotkeys.h"
 #include "std_api.h"
+#include "about_tab.h"
 
 #include "d3d11on12ui.h"
 
@@ -47,9 +48,10 @@ static decltype(FAKE_Wndproc)* OLD_Wndproc = nullptr;
 static HINSTANCE self_module_handle = nullptr;
 static bool should_show_ui = false;
 static bool betterapi_load_selftest = false;
+static uint32_t frame_count_since_init = 0;
 
-#define EveryNFrames(N) []()->bool{static unsigned count=0;if(++count==(N)){count=0;}return !count;}()
 
+#define EveryNFrames(N) ((frame_count_since_init%(N))==0)
 
 static char DLL_DIR[MAX_PATH]{};
 
@@ -75,6 +77,27 @@ extern char* GetPathInDllDir(char* path_max_buffer, const char* filename) {
 
 
 #ifdef MODMENU_DEBUG
+struct FilenameOnly {
+        const char* name;
+        uint32_t name_len;
+};
+static FilenameOnly filename_only(const char* path) {
+        FilenameOnly ret{};
+
+        for (uint32_t i = 0; path[i]; ++i) {
+                if (path[i] == '/' || path[i] == '\\') {
+                        ret.name = &path[i + 1];
+                }
+        }
+
+        for (uint32_t i = 0; ret.name[i]; ++i) {
+                ret.name_len = i;
+                if (ret.name[i] == '.') break;
+        }
+
+        return ret;
+}
+
 #include <mutex>
 std::mutex logging_mutex;
 static thread_local char format_buffer[4096];
@@ -97,7 +120,8 @@ static void write_log(const char* const str) noexcept {
         logging_mutex.unlock();
 }
 extern void DebugImpl(const char* const filename, const char* const func, int line, const char* const fmt, ...) noexcept {
-        auto bytes = snprintf(format_buffer, buffer_size, "%s:%s:%d>", filename, func, line);
+        const auto fn = filename_only(filename);
+        auto bytes = snprintf(format_buffer, buffer_size, "%6u | %16.*s | %32s | %4d>", frame_count_since_init, fn.name_len, fn.name, func, line);
         ASSERT(bytes > 0);
         ASSERT(bytes < buffer_size);
 
@@ -116,14 +140,16 @@ extern void DebugImpl(const char* const filename, const char* const func, int li
 }
 
 extern void AssertImpl [[noreturn]] (const char* const filename, const char* const func, int line, const char* const text) noexcept {
+        const auto fn = filename_only(filename);
         snprintf(
                 format_buffer,
                 buffer_size,
-                "In file     '%s'\n"
+                "In file     '%.*s'\n"
                 "In function '%s'\n"
                 "On line     '%d'\n"
                 "Message:    '%s'",
-                filename,
+                fn.name_len,
+                fn.name,
                 func,
                 line,
                 text
@@ -137,7 +163,8 @@ extern void AssertImpl [[noreturn]] (const char* const filename, const char* con
 extern void TraceImpl(const char* const filename, const char* const func, int line, const char* const fmt, ...) noexcept {
         static bool init = false;
         static char tracebuff[2048];
-        const auto bytes = snprintf(tracebuff, sizeof(tracebuff), "%s:%s:%d> ", filename, func, line);
+        const auto fn = filename_only(filename);
+        const auto bytes = snprintf(tracebuff, sizeof(tracebuff), "[%08u]%8.*s:%s:%d> ", frame_count_since_init, fn.name_len, fn.name, func, line);
         ASSERT(bytes > 0 && "trace buffer too small ?");
         va_list args;
         va_start(args, fmt);
@@ -171,7 +198,7 @@ static const BetterAPI API {
 };
 
 
-extern "C" __declspec(dllexport) const BetterAPI * GetBetterAPI() {
+extern const BetterAPI * GetBetterAPI() {
         return &API;
 }
 
@@ -416,6 +443,41 @@ static void Callback_Config(ConfigAction action) {
 }
 
 
+static UINT(*OLD_GetRawInputData)(HRAWINPUT hri, UINT cmd, LPVOID data, PUINT data_size, UINT hsize) = nullptr;
+static UINT FAKE_GetRawInputData(HRAWINPUT hri, UINT cmd, LPVOID data, PUINT data_size, UINT hsize) {
+        auto ret = OLD_GetRawInputData(hri, cmd, data, data_size, hsize);
+        if (data == NULL) return ret;
+
+        if (cmd == RID_INPUT) {
+                auto input = (RAWINPUT*)data;
+
+                if (input->header.dwType == RIM_TYPEKEYBOARD) {
+                        auto keydata = input->data.keyboard;
+                        if (keydata.Message == WM_KEYDOWN || keydata.Message == WM_SYSKEYDOWN) {
+                                //DEBUG("Keydown message: %u", keydata.VKey);
+                                if (HotkeyReceiveKeypress(keydata.VKey)) {
+                                        goto HIDE_INPUT_FROM_GAME;
+                                }
+                        }
+                }
+
+                if (should_show_ui == false) return ret;
+
+        HIDE_INPUT_FROM_GAME:
+                //hide input from the game when shouldshowui is true and data is not null
+                input->header.dwType = RIM_TYPEHID; //game ignores typehid messages
+        }
+        return ret;
+}
+
+
+static BOOL(*OLD_ClipCursor)(const RECT*) = nullptr;
+static BOOL FAKE_ClipCursor(const RECT* rect) {
+        // When the imgui window is open only pass through clipcursor(NULL);
+        return OLD_ClipCursor((should_show_ui) ? NULL : rect);
+};
+
+
 static void SetupModMenu() {
         // use the directory of the betterconsole dll as the place to put other files
         // NOTE: this needs to be done before any other file (logfile/config/console history) is opened
@@ -428,40 +490,11 @@ static void SetupModMenu() {
 
         DEBUG("Initializing BetterConsole...");
         DEBUG("BetterConsole Version: " BETTERCONSOLE_VERSION);
-        static UINT(*OLD_GetRawInputData)(HRAWINPUT hri, UINT cmd, LPVOID data, PUINT data_size, UINT hsize) = nullptr;
-        static decltype(OLD_GetRawInputData) FAKE_GetRawInputData = [](HRAWINPUT hri, UINT cmd, LPVOID data, PUINT data_size, UINT hsize) -> UINT {
-                auto ret = OLD_GetRawInputData(hri, cmd, data, data_size, hsize);
-                if (data == NULL) return ret;
-                 
-                if (cmd == RID_INPUT) {
-                        auto input = (RAWINPUT*)data;
-
-                        if (input->header.dwType == RIM_TYPEKEYBOARD) {
-                                auto keydata = input->data.keyboard;
-                                if (keydata.Message == WM_KEYDOWN || keydata.Message == WM_SYSKEYDOWN) {
-                                        if (HotkeyReceiveKeypress(keydata.VKey)) {
-                                                goto HIDE_INPUT_FROM_GAME;
-                                        }
-                                }
-                        }
-
-                        if (should_show_ui == false) return ret;
-
-                        HIDE_INPUT_FROM_GAME:
-                        //hide input from the game when shouldshowui is true and data is not null
-                        input->header.dwType = RIM_TYPEHID; //game ignores typehid messages
-                }
-                return ret;
-        };
+        
+        //i would prefer not hooking multiple win32 apis but its more update-proof than engaging with the game's wndproc
         OLD_GetRawInputData = (decltype(OLD_GetRawInputData)) API.Hook->HookFunctionIAT("user32.dll", "GetRawInputData", (FUNC_PTR)FAKE_GetRawInputData);
         DEBUG("Hook GetRawInputData: %p", OLD_GetRawInputData);
-
-        //i would prefer not hooking multiple win32 apis but its more update-proof than engaging with the game's wndproc
-        static BOOL(*OLD_ClipCursor)(const RECT*) = nullptr;
-        static decltype(OLD_ClipCursor) FAKE_ClipCursor = [](const RECT* rect) -> BOOL {
-                // When the imgui window is open only pass through clipcursor(NULL);
-                return OLD_ClipCursor((should_show_ui) ? NULL : rect);
-        };
+                
         OLD_ClipCursor = (decltype(OLD_ClipCursor)) API.Hook->HookFunctionIAT("user32.dll", "ClipCursor", (FUNC_PTR)FAKE_ClipCursor);
         DEBUG("Hook ClipCursor: %p", OLD_ClipCursor);
 
@@ -495,6 +528,7 @@ static int OnBetterConsoleLoad(const struct better_api_t* api) {
         const auto handle = api->Callback->RegisterMod("(internal)");
         api->Callback->RegisterConfigCallback(handle, Callback_Config);
         api->Callback->RegisterHotkeyCallback(handle, OnHotheyActivate);
+        api->Callback->RegisterAboutPage(handle, AboutTabCallback);
         
         //force hotkey for betterconsole default action using internal api
         HotkeyRequestNewHotkey(handle, "BetterConsole", 0, VK_F1);
@@ -548,7 +582,6 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
 
         SwapChainQueue* best_match = nullptr;
         for (uint32_t i = 0; i < MAX_QUEUES; ++i) {
-                //DEBUG("SEARCH [%u]: CommandQueue: '%p', SwapChain: '%p', Age: %u, Match: %s", i, Queues[i].Queue, Queues[i].SwapChain, Queues[i].Age, (Queues[i].SwapChain == This) ? "True" : "False");
                 if (Queues[i].SwapChain == This) {
                         if (best_match == nullptr || Queues[i].Age < best_match->Age) {
                                 best_match = &Queues[i];
@@ -556,7 +589,6 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
                 }
         }
         ASSERT(best_match != nullptr);
-        //DEBUG("BEST MATCH: CommandQueue: '%p', SwapChain: '%p', Age: %u", best_match->Queue, best_match->SwapChain, best_match->Age);
         
         if (command_queue != best_match->Queue) {
                 command_queue = best_match->Queue;
@@ -590,6 +622,7 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
                 DEBUG("Swapchain::Present returned error: %u", ret);
         }
         --loop_check;
+        ++frame_count_since_init;
 
         return ret;
 }
@@ -614,8 +647,9 @@ static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 ImGui_ImplWin32_Init(hWnd);
         }
 
-        if (uMsg == WM_KEYDOWN && wParam == VK_F1) {
-                //OnHotheyActivate(0); // this is for debugging only
+        // Fallback in case we are running in an environment without getrawinputdata
+        if (uMsg == WM_KEYDOWN && !OLD_GetRawInputData) {
+                HotkeyReceiveKeypress(wParam);
         }
 
         if (uMsg == WM_SIZE || uMsg == WM_CLOSE) {
