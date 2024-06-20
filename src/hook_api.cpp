@@ -268,6 +268,7 @@ static FUNC_PTR GetModuleEntrypoint(const void* module_base) {
 
 static void** LiterallyReplaceEntireVtable(void*** ppClassInstance, uint32_t method_count) {
         void** ret = (void**)malloc(sizeof(void*) * method_count);
+        ASSERT(ret != NULL);
         memcpy(ret, **ppClassInstance, sizeof(void*) * method_count);
         **ppClassInstance = ret;
         return ret;

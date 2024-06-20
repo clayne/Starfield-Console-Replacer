@@ -2,6 +2,12 @@
 
 #include <ctype.h>
 
+
+// maybe more the shellopen stuff to a utility header?
+#include <Windows.h>
+#include <shellapi.h>
+
+
 static void simple_separator() {
         ImGui::Separator();
 }
@@ -267,6 +273,15 @@ static bool simple_radio(const char* text, uint32_t* group_id, uint32_t* button_
 }
 
 
+static void simple_link_button(const char* text, const char* url_or_path) {
+        bool clicked = ImGui::Button(text);
+        bool hovered = ImGui::IsItemHovered();
+
+        if (hovered) ImGui::SetTooltip("OPEN: '%s'", url_or_path);
+        if (clicked) ShellExecuteA(NULL, "open", url_or_path, NULL, NULL, 1);
+}
+
+
 static constexpr simple_draw_t SimpleDraw {
         simple_separator,
         simple_text,
@@ -289,7 +304,8 @@ static constexpr simple_draw_t SimpleDraw {
         simple_button_bar,
         simple_tip,
         simple_sameline,
-        simple_radio
+        simple_radio,
+        simple_link_button
 };
 
 

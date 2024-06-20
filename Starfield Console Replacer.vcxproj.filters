@@ -83,6 +83,9 @@
     <ClCompile Include="src\minhook_unity_build.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\about_tab.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="imgui\imconfig.h">
@@ -159,6 +162,9 @@
     </ClInclude>
     <ClInclude Include="imgui\imgui_impl_dx11.h">
       <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\about_tab.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

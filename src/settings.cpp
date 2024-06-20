@@ -348,7 +348,7 @@ extern void ConfigU32(ConfigAction action, const char* key_name, uint32_t* value
         else if (action == ConfigAction_Write) {
                 ConfigWriteKey(key_name);
                 char fmt[32];
-                snprintf(fmt, sizeof(fmt), "%u\n", *value);
+                snprintf(fmt, sizeof(fmt), "%u", *value);
                 BufferedOutputWrite(fmt);
         }
         else if (action == ConfigAction_Edit) {
@@ -439,7 +439,7 @@ static void ConfigWriteEscapedString(const char *in_unescaped_string) {
 
         // insert escape sequence so that the parser doesnt
         // trim whitespace unintentionally
-        BufferedOutputWrite("\"\n");
+        BufferedOutputWrite("\"");
 }
 
 
@@ -468,10 +468,27 @@ static void ConfigString(ConfigAction action, const char* key_name, char* out_bu
 }
 
 
+static void ConfigBool(ConfigAction action, const char* key_name, bool* out_value) {
+        if (action == ConfigAction_Read) {
+                const auto value = ConfigLookupKey(key_name);
+                if (value) {
+                        *out_value = *value == '1';
+                }
+        }
+        else if (action == ConfigAction_Write) {
+                ConfigWriteKey(key_name);
+                BufferedOutputWrite((*out_value) ? "1" : "0");
+        }
+        else if (action == ConfigAction_Edit) {
+                SimpleDraw->Checkbox(key_name, out_value);
+        }
+}
+
+
 static constexpr const struct config_api_t Config = {
-        //ConfigLookupKey,
         ConfigU32,
-        ConfigString
+        ConfigString,
+        ConfigBool
 };
 
 
@@ -503,6 +520,7 @@ extern void SaveSettingsRegistry() {
                 BetterConsoleConfig->mod_name = CallbackGetName(config[i]);
                 const auto callback = CallbackGetCallback(CALLBACKTYPE_CONFIG, config[i]);
                 callback.config_callback(ConfigAction_Write);
+                BufferedOutputWrite("\n"); //move to next line
         }
 
         ConfigClose(BetterConsoleConfig);
@@ -524,7 +542,7 @@ extern void draw_settings_tab() {
         }
 
         static uint32_t selection = 0;
-        SimpleDraw->HBoxLeft(0.3, 12.f);
+        SimpleDraw->HBoxLeft(0.f, 12.f);
         if (SimpleDraw->Button("Save Configuration")) {
                 SaveSettingsRegistry(); //TODO: this doesnt get the hotkeys
         }
