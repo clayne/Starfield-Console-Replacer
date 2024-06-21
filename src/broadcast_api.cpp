@@ -7,7 +7,7 @@ extern void BroadcastBetterAPIMessage(const struct better_api_t *API) {
         char cur_dir[MAX_PATH]; //this will be the exe folder
         GetCurrentDirectoryA(MAX_PATH, cur_dir);
 
-        uint32_t cur_dir_len = strlen(cur_dir);
+        auto cur_dir_len = (uint32_t)strlen(cur_dir);
 
         DEBUG("Current folder: '%s'", cur_dir);
 

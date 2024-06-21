@@ -139,7 +139,11 @@ extern void DX11_InitializeOrRender(void* dx12_swapchain, void* dx12_commandqueu
         const auto swapchain = (IDXGISwapChain3*)dx12_swapchain;
 
         const auto index = swapchain->GetCurrentBackBufferIndex();
-        ASSERT(index < g_buffercount);
+        if (index >= g_buffercount) {
+                DX11_ReleaseIfInitialized();
+                return;
+        }
+
         const auto b = &Buffers[index];
 
         ImGui_ImplDX11_NewFrame();

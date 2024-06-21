@@ -40,6 +40,39 @@ pcVar15 = "float fresult\nref refr\nset refr to GetSelectedRef\nset fresult to "
 */
 
 
+// starting console command runner:
+// 40 53 48 83 EC ?? 8B 02 48 8B D9 83 F8 ?? 75 ?? 48 8B
+/* uint64_t ExecuteStartingConsoleCommand(void* param_1,int *param_2);
+*  if (*param_2 == 5) then execute starting console command
+* 
+undefined8 ExecuteStartingConsoleCommand(longlong param_1,int *param_2)
+
+{
+  longlong string_len;
+  undefined8 uVar1;
+
+  if (*param_2 == 5) {
+    string_len = -1;
+    do {
+      string_len = string_len + 1;
+    } while (PTR_SettingValue_145f9e358[string_len] != '\0');
+    if (string_len == 0) {
+      return 0;
+    }
+    ExecuteCommand(DAT_14687ad18);
+  }
+  else if (*param_2 != 6) {
+    return 0;
+  }
+  if (param_1 != 0) {
+    uVar1 = FUN_1405bbbf0();
+    FUN_1405bb700(uVar1,param_1);
+  }
+  return 0;
+}
+*/
+
+
 #define OUTPUT_FILE_PATH "BetterConsoleOutput.txt"
 #define HISTORY_FILE_PATH "BetterConsoleHistory.txt"
 #define NUM_HOTKEY_COMMANDS 16
@@ -54,13 +87,20 @@ enum class InputMode : uint32_t {
 static void console_run(void* consolemgr, char* cmd);
 static void console_print(void* consolemgr, const char* fmt, va_list args);
 
+static uintptr_t starting_console_command(void* param_1, int* param_2);
+
+static unsigned char* GetGamePausedAddress();
+
 static int CALLBACK_inputtext_cmdline(ImGuiInputTextCallbackData* data);
 static int CALLBACK_inputtext_switch_mode(ImGuiInputTextCallbackData* data);
 static bool strcasestr(const char* haystack, const char* needle);
 
 static void(*OLD_ConsolePrintV)(void*, const char*, va_list) = nullptr;    
 static void(*OLD_ConsoleRun)(void*, char*) = nullptr;
+static uintptr_t(*OLD_StartingConsoleCommand)(void*, int*) = nullptr;
 
+static bool IgnoreGamePaused = false;
+static bool StartingCommandCompleted = false;
 static bool UpdateScroll = false;
 static bool UpdateFocus = true;
 static int HistoryIndex = -1;
@@ -84,9 +124,6 @@ struct Command {
         char name[32];
         char data[512];
 } static HotkeyCommands[NUM_HOTKEY_COMMANDS];
-
-static bool PauseGameOnConsoleOpen = false;
-static bool FirstFrameRendered = true;
 
 
 static void forward_to_old_consoleprint(void* consolemgr, const char* fmt, ...) {
@@ -127,54 +164,86 @@ static void run_comand(const char* command) {
 
 
 static void SetGamePaused(bool paused) {
-        // SOF pauses the game after one frame
-        run_comand("StepOneFrame");
+        if (!StartingCommandCompleted) return;
+        const auto ptr = GetGamePausedAddress();
+        if (ptr) *ptr = paused;
+}
 
-        if (!paused) {
-                // now that we know the game is paused
-                // we can toggle the game pause to resume
-                run_comand("ToggleGamePause");
+static uintptr_t starting_console_command(void* param_1, int* param_2) {
+        //TODO: should we register listeners for this event ?
+        if (*param_2 == 5) { // 5 means the game is ready to run a command
+                StartingCommandCompleted = true;
         }
+        return OLD_StartingConsoleCommand(param_1, param_2);
 }
 
 static void draw_console_window(void* imgui_context) {
         (void)imgui_context;
+
+
+        if (!OLD_StartingConsoleCommand) {
+                SimpleDraw->Text("Could not hook starting console command function.");
+                if (ImGui::Button("Ignore")) {
+                        OLD_StartingConsoleCommand = [](void*, int*) noexcept -> uintptr_t {
+                                return 0;
+                                };
+                        StartingCommandCompleted = true;
+                }
+                return;
+        }
 
         // Provide a message to the user about the state of the application without triggering an assert
         // going forward, non-fatal asserts should be the default. I already have the ui working in a
         // stable manner, i should use it to provide feedback not crash the whole game
         if (!(OLD_ConsolePrintV && OLD_ConsoleRun)) {
                 if (!OLD_ConsolePrintV) {
-                        SimpleDraw->Text("Could not hook console print function, incompatible mod loaded or game update incompatible");
+                        SimpleDraw->Text("Could not hook console print function.");
                 }
                 if (!OLD_ConsoleRun) {
-                        SimpleDraw->Text("Could not hook console execute function, incompatible mod loaded or game update incompatible");
+                        SimpleDraw->Text("Could not hook console execute function.");
                 }
 
+                SimpleDraw->Text("Possible incompatible mod loaded or game update incompatible");
                 SimpleDraw->Text("BetterConsole version %s is known to be compatible with game version %u.%u.%u", BETTERCONSOLE_VERSION, (GAME_VERSION >> 24) & 0xFF, (GAME_VERSION >> 16) & 0xFF, (GAME_VERSION>>4) & 0xFFF);
                 return;
         }
 
-        static bool GameisPaused = false;
-        if (GameisPaused) {
-                if(ImGui::Button("Unpause Game")) {
-                        SetGamePaused(false);
-                        GameisPaused = false;
-                }
-        }
-        else {
-                if(ImGui::Button("Pause Game")) {
-                        SetGamePaused(true);
-                        GameisPaused = true;
-                }
-        }
-        ImGui::SameLine();
 
-        if (FirstFrameRendered && PauseGameOnConsoleOpen) {
-                GameisPaused = true;
-                FirstFrameRendered = false;
-                SetGamePaused(true);
+        if (!StartingCommandCompleted) {
+                SimpleDraw->Text("Waiting for game to initialize console...");
+                return;
         }
+
+
+        if (!IgnoreGamePaused) {
+                if(GetGamePausedAddress()) {
+                        IgnoreGamePaused = true;
+                }
+                else {
+                        SimpleDraw->Text("Cannot find game paused flag address");
+                        if(ImGui::Button("Ignore")) {
+                                IgnoreGamePaused = true;
+                        }
+                        return;
+                }
+        }
+
+
+        unsigned char* GameisPaused = GetGamePausedAddress();
+        if (GameisPaused) {
+                if(*GameisPaused) {
+                        if (ImGui::Button("Unpause Game")) {
+                                *GameisPaused = false;
+                        }
+                }
+                else {
+                        if (ImGui::Button("Pause Game")) {
+                                *GameisPaused = true;
+                        }
+                }
+                ImGui::SameLine();
+        }
+        
 
         ImGui::SetNextItemWidth(-(ImGui::GetFontSize() * 11.5f));
         if (UpdateFocus) {
@@ -311,24 +380,11 @@ static bool strcasestr(const char* s, const char* find) {
 static void CALLBACK_console_settings(enum ConfigAction action) {
         char keyname[32];
 
-        Config->ConfigBool(action, "Pause Game On Console Open", &PauseGameOnConsoleOpen);
 
         for (uint32_t i = 0; i < 16; ++i) {
                 auto& hc = HotkeyCommands[i];
                 snprintf(keyname, sizeof(keyname), "Hotkey Command%u", i);
                 Config->ConfigString(action, keyname, hc.data, sizeof(hc.data));
-        }
-
-        // this is a side-channel attack on my own code,
-        // i do not yet have an events api for something
-        // like "yo, your mod just gained focus, you might want to do something"
-        // so i take advantage of the fact that config write happens when you close
-        // the ui, now the draw call will know next time the UI is opened
-        if (PauseGameOnConsoleOpen) {
-                if (action == ConfigAction_Write) {
-                        FirstFrameRendered = true;
-                        SetGamePaused(false);
-                }
         }
 }
 
@@ -385,9 +441,49 @@ extern void setup_console(const BetterAPI* api) {
                 );
         }
 
+        DEBUG("Hooking starting console command using AOB method");
+        auto hook_start_aob = HookAPI->AOBScanEXE("40 53 48 83 EC ?? 8B 02 48 8B D9 83 F8 ?? 75 ?? 48 8B");
+        
+        if (hook_start_aob) {
+                OLD_StartingConsoleCommand = (decltype(OLD_StartingConsoleCommand))HookAPI->HookFunction(
+                        (FUNC_PTR)hook_start_aob,
+                        (FUNC_PTR)starting_console_command
+                );
+        }
+
         IOBuffer[0] = 0;
 }
 
+
+static unsigned char* GetGamePausedAddress() {
+        static unsigned char* fun = (unsigned char*)GetHookAPI()->AOBScanEXE(
+                "48 8b 0d ?? ?? ?? ??" // RCX,QWORD PTR [rip+0x????????]
+                " 80 79 ?? 00"         // CMP BYTE PTR [rcx+0x??],0x00 
+                " 0f 94 c0"            // SETZ AL (AL = ZF)
+                " 88 41 ??"            // MOV BYTE PTR [RCX + 0x??],AL
+                " b0 01"               // MOV AL,0x1
+                " C3"                  // RET
+        );
+        if (!fun) return nullptr;
+        //DEBUG("Found game paused function: %llX", fun);
+
+        uint32_t offset_gamestate;
+        unsigned char offset_pause_flag;
+        memcpy(&offset_gamestate, fun + 3, sizeof(offset_gamestate));
+        memcpy(&offset_pause_flag, fun + 9, sizeof(offset_pause_flag));
+        //DEBUG("Displacement: %X", offset_gamestate);
+        //DEBUG("Displacement2: %X", offset_pause_flag);
+
+        // +7 because RIP points to the next instruction
+        unsigned char** gamestate = (unsigned char**)(fun + offset_gamestate + 7);
+        //DEBUG("Gamestate address: %llX", *gamestate);
+        if (!gamestate) return nullptr;
+
+        auto ret = *gamestate + offset_pause_flag;
+        //DEBUG("Gamestate: %llX", ret);
+
+        return ret;
+}
 
 
 

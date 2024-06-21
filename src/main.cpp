@@ -434,7 +434,8 @@ static HRESULT FAKE_CreateDXGIFactory2(UINT Flags, REFIID RefID, void **ppFactor
 static void Callback_Config(ConfigAction action) {
         auto c = GetConfigAPI();
         auto s = GetSettingsMutable();
-        c->ConfigU32(action, "FontScaleOverride", &s->FontScaleOverride);
+        c->ConfigU32(action, "Font Scale Override", &s->FontScaleOverride);
+        c->ConfigBool(action, "Pause Game On GUI Open", &s->PauseGameWhenOpened);
  
         //do this last until i have this working with the official api
         if (action == ConfigAction_Write) {
@@ -518,17 +519,16 @@ extern "C" __declspec(dllexport) void SFSEPlugin_Load(const SFSEInterface*) {}
 
 static int OnBetterConsoleLoad(const struct better_api_t* api) {
         ASSERT(api == &API && "Betterconsole already loaded?? Do you have multiple versions of BetterConsole installed?");
-        
-        // The console part of better console is now minimally coupled to the mod menu
-        DEBUG("Console setup - crashing here is AOB issue");
-        setup_console(api);
 
         //should the hotkeys code be an internal plugin too?
-
-        const auto handle = api->Callback->RegisterMod("(internal)");
+        const auto handle = api->Callback->RegisterMod(INTERNAL_PLUGIN_NAME);
         api->Callback->RegisterConfigCallback(handle, Callback_Config);
         api->Callback->RegisterHotkeyCallback(handle, OnHotheyActivate);
         api->Callback->RegisterAboutPage(handle, AboutTabCallback);
+
+        // The console part of better console is now minimally coupled to the mod menu
+        DEBUG("Console setup - crashing here is AOB issue");
+        setup_console(api);
         
         //force hotkey for betterconsole default action using internal api
         HotkeyRequestNewHotkey(handle, "BetterConsole", 0, VK_F1);
@@ -544,9 +544,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE self, DWORD fdwReason, LPVOID) {
                 static bool RunHooksOnlyOnce = true;
                 ASSERT(RunHooksOnlyOnce == true); //i want to know if this assert ever gets triggered
 
-#ifdef _DEBUG
                 //while (!IsDebuggerPresent()) Sleep(100);
-#endif // _DEBUG
 
                 self_module_handle = self;
 
@@ -573,7 +571,7 @@ static HRESULT FAKE_ResizeBuffers(IDXGISwapChain3* This, UINT BufferCount, UINT 
 
 
 static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT PresentFlags) {
-        if (EveryNFrames(240)) {
+        if (EveryNFrames(1200)) {
                 DEBUG("render heartbeat, showing ui: %s", (should_show_ui)? "true" : "false");
         }
 
@@ -631,7 +629,7 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
 static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         static HWND last_window_handle = nullptr;
 
-        if (EveryNFrames(600)) {
+        if (EveryNFrames(1200)) {
                 DEBUG("input heartbeat");
         }
 
@@ -671,5 +669,9 @@ static void OnHotheyActivate(uintptr_t) {
         if (!should_show_ui) {
                 //when you close the UI, settings are saved
                 SaveSettingsRegistry();
+        }
+
+        if (GetSettings()->PauseGameWhenOpened) {
+                GetConsoleAPI()->SetGamePaused(should_show_ui);
         }
 }

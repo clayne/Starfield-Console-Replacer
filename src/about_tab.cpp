@@ -8,7 +8,7 @@ extern void draw_about_tab() {
         uint32_t num_about;
         const auto handles = CallbackGetHandles(CALLBACKTYPE_ABOUT, &num_about);
 
-        static const auto to_string = [](const void* handles, uint32_t index, char* fmt, uint32_t fmt_size) noexcept -> const char* {
+        static const auto to_string = [](const void* handles, uint32_t index, char*, uint32_t) noexcept -> const char* {
                 const RegistrationHandle* hs = (const RegistrationHandle*)handles;
                 return CallbackGetName(hs[index]);
                 };

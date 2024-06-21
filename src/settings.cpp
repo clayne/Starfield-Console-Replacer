@@ -39,9 +39,8 @@ static const auto SimpleDraw = GetSimpleDrawAPI();
 static inline uint64_t hash_fnv1a(const char* str) {
         uint64_t ret = 0xcbf29ce484222325;
 
-        unsigned char c;
-        while (c = *str++) {
-                ret ^= c;
+        while (*str) {
+                ret ^= *str++;
                 ret *= 0x00000100000001B3;
         }
 
@@ -350,6 +349,7 @@ extern void ConfigU32(ConfigAction action, const char* key_name, uint32_t* value
                 char fmt[32];
                 snprintf(fmt, sizeof(fmt), "%u", *value);
                 BufferedOutputWrite(fmt);
+                BufferedOutputWrite("\n"); //move to next line
         }
         else if (action == ConfigAction_Edit) {
                 ImGui::DragScalar(key_name, ImGuiDataType_U32, value);
@@ -461,6 +461,7 @@ static void ConfigString(ConfigAction action, const char* key_name, char* out_bu
                 out_buffer[buffer_size - 1] = 0; //now we can assume null termination
                 ConfigWriteKey(key_name);
                 ConfigWriteEscapedString(out_buffer);
+                BufferedOutputWrite("\n"); //move to next line
         }
         else if (action == ConfigAction_Edit) {
                 ImGui::InputText(key_name, out_buffer, buffer_size);
@@ -478,6 +479,7 @@ static void ConfigBool(ConfigAction action, const char* key_name, bool* out_valu
         else if (action == ConfigAction_Write) {
                 ConfigWriteKey(key_name);
                 BufferedOutputWrite((*out_value) ? "1" : "0");
+                BufferedOutputWrite("\n"); //move to next line
         }
         else if (action == ConfigAction_Edit) {
                 SimpleDraw->Checkbox(key_name, out_value);
@@ -520,7 +522,6 @@ extern void SaveSettingsRegistry() {
                 BetterConsoleConfig->mod_name = CallbackGetName(config[i]);
                 const auto callback = CallbackGetCallback(CALLBACKTYPE_CONFIG, config[i]);
                 callback.config_callback(ConfigAction_Write);
-                BufferedOutputWrite("\n"); //move to next line
         }
 
         ConfigClose(BetterConsoleConfig);

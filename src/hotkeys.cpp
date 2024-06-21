@@ -100,7 +100,7 @@ static void rebuild_hotkey_cache() {
         ActiveHotkeys.clear();
         std::sort(AllHotkeys.begin(), AllHotkeys.end());
 
-        ConfigSetMod("(hotkeys)");
+        ConfigSetMod(INTERNAL_PLUGIN_NAME);
         for (unsigned i = 0; i < AllHotkeys.size(); ++i) {
                 const auto h = &AllHotkeys[i];
                 snprintf(tmp_buffer, sizeof(tmp_buffer), "%s-%s", CallbackGetName(h->owner), h->name);
@@ -179,8 +179,8 @@ extern void draw_hotkeys_tab() {
         SimpleDraw->HBoxLeft(0.f, 12.f);
         if (SimpleDraw->SelectionList(&selected, hot_handles, num_handles, to_string)) {
                 const auto range = std::equal_range(AllHotkeys.begin(), AllHotkeys.end(), (uint32_t)hot_handles[selected]);
-                infos_index = std::distance(AllHotkeys.begin(), range.first);
-                index_count = std::distance(range.first, range.second);
+                infos_index = (uint32_t)std::distance(AllHotkeys.begin(), range.first);
+                index_count = (uint32_t)std::distance(range.first, range.second);
         }
         SimpleDraw->HBoxRight();
         enum table_columns { TC_HOTKEY_NAME, TC_HOTKEY_COMBO, TC_BUTTON, TC_COUNT };
@@ -233,7 +233,7 @@ extern void HotkeySaveSettings() {
                 rebuild_hotkey_cache();
         }
 
-        ConfigSetMod("(hotkeys)");
+        ConfigSetMod(INTERNAL_PLUGIN_NAME);
         char tmp_buffer[128];
         for (auto& info : ActiveHotkeys) {
                 const auto hotkey = &AllHotkeys[info.second];

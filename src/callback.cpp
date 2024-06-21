@@ -7,53 +7,36 @@
 
 struct ModInfo {
         const char* mod_name;
-        DRAW_CALLBACK draw_callback;
-        CONFIG_CALLBACK config_callback;
-        HOTKEY_CALLBACK hotkey_callback;
-        DRAW_CALLBACK about_callback;
+        CallbackFunction callback[CALLBACKTYPE_COUNT];
 };
 
 
 static std::vector<ModInfo> RegisteredMods{};
+
+
+//TODO: these need to match up perfectly,
+//      is there a better way to do this?
 static std::vector<RegistrationHandle> DrawHandles{};
 static std::vector<RegistrationHandle> ConfigHandles{};
 static std::vector<RegistrationHandle> HotkeyHandles{};
 static std::vector<RegistrationHandle> AboutHandles{};
 
+static constexpr std::vector<RegistrationHandle>* const CallbackHandles[] = {
+        &DrawHandles,
+        &ConfigHandles,
+        &HotkeyHandles,
+        &AboutHandles
+};
+
 
 extern const RegistrationHandle* CallbackGetHandles(CallbackType type, uint32_t* out_count) {
-        uint32_t count = 0;
-        RegistrationHandle *ret = nullptr;
+        ASSERT(type < CALLBACKTYPE_COUNT);
 
-        switch (type)
-        {
-        case CALLBACKTYPE_DRAW:
-                count = (uint32_t)DrawHandles.size();
-                ret = &DrawHandles[0];
-                break;
-        case CALLBACKTYPE_CONFIG:
-                count = (uint32_t)ConfigHandles.size();
-                ret = &ConfigHandles[0];
-                break;
-        case CALLBACKTYPE_HOTKEY:
-                count = (uint32_t)HotkeyHandles.size();
-                ret = &HotkeyHandles[0];
-                break;
-        case CALLBACKTYPE_ABOUT:
-                count = (uint32_t)AboutHandles.size();
-                ret = &AboutHandles[0];
-                break;
-        default:
-                DEBUG("Invalid callback type %d", type);
-                ASSERT(false && "Invalid callback type");
-                break;
-        }
-
-        if (out_count) {
+        uint32_t count = (uint32_t)CallbackHandles[type]->size();
+        if(out_count) {
                 *out_count = count;
         }
-
-        return ret;
+        return &CallbackHandles[type]->operator[](0);
 }
 
 
@@ -65,28 +48,9 @@ extern const char* CallbackGetName(RegistrationHandle handle) {
 
 extern CallbackFunction CallbackGetCallback(CallbackType type, RegistrationHandle handle) {
         ASSERT(handle < RegisteredMods.size());
+        ASSERT(type < CALLBACKTYPE_COUNT);
         CallbackFunction ret{};
-
-        switch (type)
-        {
-        case CALLBACKTYPE_DRAW:
-                ret.draw_callback = RegisteredMods[handle].draw_callback;
-                break;
-        case CALLBACKTYPE_CONFIG:
-                ret.config_callback = RegisteredMods[handle].config_callback;
-                break;
-        case CALLBACKTYPE_HOTKEY:
-                ret.hotkey_callback = RegisteredMods[handle].hotkey_callback;
-                break;
-        case CALLBACKTYPE_ABOUT:
-                ret.about_callback = RegisteredMods[handle].about_callback;
-                break;
-        default:
-                DEBUG("Invalid callback type %d", type);
-                ASSERT(false && "Invalid callback type");
-                break;
-        }
-
+        memcpy(&ret, &RegisteredMods[handle].callback[type], sizeof(ret));
         return ret;
 }
 
@@ -104,31 +68,47 @@ static RegistrationHandle RegisterMod(const char* mod_name) {
 }
 
 
-//TODO: allow changing the draw callback without pushing a new handle
-static void RegisterDrawCallback(RegistrationHandle owner, DRAW_CALLBACK callback) {
+static void RegisterCallback(RegistrationHandle owner, CallbackType type, CallbackFunction callback) {
         ASSERT(owner < RegisteredMods.size());
-        RegisteredMods[owner].draw_callback = callback;
-        DrawHandles.push_back(owner);
+        ASSERT(type < CALLBACKTYPE_COUNT);
+        FUNC_PTR callback_function;
+        memcpy(&callback_function, &callback, sizeof(callback_function));
+        ASSERT(callback_function != NULL);
+
+        auto& info = RegisteredMods[owner];
+        FUNC_PTR ptr;
+        memcpy(&ptr, &info.callback[type], sizeof(ptr));
+        if(ptr == NULL) {
+                // only register once, but allow for callbacks to be changed
+                CallbackHandles[type]->push_back(owner);
+        }
+        info.callback[type] = callback;
+}
+
+template<typename T>
+static inline CallbackFunction to_callback(const T& in) noexcept {
+        CallbackFunction ret{ nullptr };
+        memcpy(&ret, &in, sizeof(ret));
+        return ret;
+}
+
+
+static void RegisterDrawCallback(RegistrationHandle owner, DRAW_CALLBACK callback) {
+        RegisterCallback(owner, CALLBACKTYPE_DRAW, to_callback(callback));
 }
 
 
 static void RegisterConfigCallback(RegistrationHandle owner, CONFIG_CALLBACK callback) {
-        ASSERT(owner < RegisteredMods.size());
-        RegisteredMods[owner].config_callback = callback;
-        ConfigHandles.push_back(owner);
+        RegisterCallback(owner, CALLBACKTYPE_CONFIG, to_callback(callback));
 }
 
 
 static void RegisterHotkeyCallback(RegistrationHandle owner, HOTKEY_CALLBACK callback) {
-        ASSERT(owner < RegisteredMods.size());
-        RegisteredMods[owner].hotkey_callback = callback;
-        HotkeyHandles.push_back(owner);
+        RegisterCallback(owner, CALLBACKTYPE_HOTKEY, to_callback(callback));
 }
 
 static void RegisterAboutCallback(RegistrationHandle owner, DRAW_CALLBACK callback) {
-        ASSERT(owner < RegisteredMods.size());
-        RegisteredMods[owner].about_callback = callback;
-        AboutHandles.push_back(owner);
+        RegisterCallback(owner, CALLBACKTYPE_ABOUT, to_callback(callback));
 }
 
 
