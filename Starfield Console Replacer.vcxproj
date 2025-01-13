@@ -82,11 +82,11 @@
       <MapExports>true</MapExports>
     </Link>
     <PostBuildEvent>
-      <Command>MD "$(OutDir)Data\SFSE\Plugins"
-MD "$(OutDir)Plugins"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Data\SFSE\Plugins\BetterConsole.dll"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Plugins\BetterConsole.asi"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)vcruntime140_1.dll"</Command>
+      <Command>MD "$(OutDir)Data\SFSE\Plugins" &gt;NUL 2&gt;NUL
+MD "$(OutDir)Plugins" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Data\SFSE\Plugins\BetterConsole.dll" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Plugins\BetterConsole.asi" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)vcruntime140_1.dll" &gt;NUL 2&gt;NUL</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -97,11 +97,11 @@ COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)vcruntime140_1.dll"</Command>
       <PreprocessorDefinitions>BETTERAPI_DEVELOPMENT_FEATURES;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <PostBuildEvent>
-      <Command>MD "$(OutDir)Data\SFSE\Plugins"
-MD "$(OutDir)Plugins"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Data\SFSE\Plugins\BetterConsole.dll"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Plugins\BetterConsole.asi"
-COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)vcruntime140_1.dll"</Command>
+      <Command>MD "$(OutDir)Data\SFSE\Plugins" &gt;NUL 2&gt;NUL
+MD "$(OutDir)Plugins" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Data\SFSE\Plugins\BetterConsole.dll" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)Plugins\BetterConsole.asi" &gt;NUL 2&gt;NUL
+COPY /Y "$(OutDir)$(TargetName).dll" "$(OutDir)vcruntime140_1.dll" &gt;NUL 2&gt;NUL</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

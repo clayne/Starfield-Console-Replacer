@@ -510,7 +510,7 @@ static bool ConfigReadData(const char* in_data, char* out_buffer, uint32_t buffe
 
         if (!lookup[0]) {
                 // intentionally repeating 0-9
-                constexpr const char const hexchars[] = "0123456789ABCDEF0123456789abcdef";
+                constexpr const char hexchars[] = "0123456789ABCDEF0123456789abcdef";
                 memset(lookup, 255, sizeof(lookup));
                 for (unsigned i = 0; i < sizeof(hexchars); i++) {
                         lookup[hexchars[i] - '0'] = i & 0xF;

@@ -418,7 +418,7 @@ BC_DLLEXPORT bool SFSEPlugin_Load(const SFSEInterface* sfse) { return true; }
 #define V(MAJOR, MINOR, PATCH) (BC_MAKE_VERSION(MAJOR, MINOR, PATCH)<=(BETTERAPI_FEATURE_LEVEL))
 
 #ifdef BETTERAPI_DEVELOPMENT_FEATURES
-#pragma message ("BETTERAPI_DEVELOPMENT_FEATURES is defined, any plugin using the api will not be compatible the nexusmods release of betterconsole.")
+//#pragma message ("BETTERAPI_DEVELOPMENT_FEATURES is defined, any plugin using the api will not be compatible the nexusmods release of betterconsole.")
 #undef BETTERAPI_FEATURE_LEVEL
 #define BETTERAPI_FEATURE_LEVEL BC_MAKE_VERSION( 9, 9, 9)
 #endif
