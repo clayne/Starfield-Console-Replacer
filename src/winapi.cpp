@@ -43,6 +43,7 @@
 
 #include <Windows.h>
 #include <shellapi.h>
+#include <intrin.h>
 
 #include "main.h"
 
@@ -201,7 +202,7 @@ static bool wrapped_ShellExecute(const char* type, const char* resource_path) {
         ASSERT(wide_path != NULL);
         
         DEBUG("HWND: NULL, lpOperation: %s, lpFile: %s, lpParameters: NULL, lpDirectory: NULL, nShowCmd: SW_SHOWNORMAL", type, resource_path);
-        uint32_t result = (uint32_t)ShellExecuteW(NULL, wide_type, wide_path, NULL, NULL, SW_SHOWNORMAL);
+        auto result = (INT_PTR)ShellExecuteW(NULL, wide_type, wide_path, NULL, NULL, SW_SHOWNORMAL);
         free(wide_type);
         free(wide_path);
 
@@ -255,6 +256,13 @@ static void* wrapped_GetProcAddress(void* module_name, const char* name) {
                 free(message);
         }
         return result;
+}
+
+
+//TODO: add this to the API
+static void wrapped_DebugBreak(void) {
+        __debugbreak();
+        //maybe compile different between debug and release versions?
 }
 
 

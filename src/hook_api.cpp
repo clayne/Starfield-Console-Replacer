@@ -36,6 +36,8 @@ static bool SafeWriteMemory(void* const dest, const void* const src, const unsig
                 return 0;
         }
 
+        DEBUG("Write %u bytes from buffer %p to memory %p", length, src, dest);
+
         //perform atomic operations for small writes up to sizeof(void*)
         //x86_64 can have strong atomic guarantees for these sizes
         switch (length) {
@@ -116,11 +118,14 @@ static IATEntry SearchIAT(const char* dll_name, const char* func_name) {
 			auto fname = RVA<const IMAGE_IMPORT_BY_NAME*>(names[j].u1.AddressOfData)->Name;
 
 			if (_stricmp(fname, func_name) == 0) {
-				return (IATEntry)&thunks[j].u1.AddressOfData;
+                                const auto addr = (IATEntry)&thunks[j].u1.AddressOfData;
+                                DEBUG("%s::%s found at offset %p", dll_name, func_name, addr);
+                                return addr;
 			}
 		}
 	}
 
+        DEBUG("%s::%s - IAT entry not found", dll_name, func_name);
 	return nullptr;
 }
 
@@ -223,6 +228,7 @@ static void* AOBScanEXE(const char* signature) {
                 }
         }
 
+        free(sig);
         return NULL;
 }
 

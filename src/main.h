@@ -21,10 +21,10 @@
 #include "../imgui/imgui.h"
 
 
-#define BETTERCONSOLE_VERSION "1.4.3"
-#define COMPATIBLE_GAME_VERSION "1.13.61"
+#define BETTERCONSOLE_VERSION "1.4.5"
+#define COMPATIBLE_GAME_VERSION "1.14.74"
 
-constexpr uint32_t GAME_VERSION = BC_MAKE_VERSION(1, 13, 61);
+constexpr uint32_t GAME_VERSION = BC_MAKE_VERSION(1, 14, 74);
 
 struct ModMenuSettings {
         uint32_t FontScaleOverride = 0;
@@ -32,4 +32,4 @@ struct ModMenuSettings {
 
 extern const ModMenuSettings* GetSettings();
 extern ModMenuSettings* GetSettingsMutable();
-extern char* GetPathInDllDir(char* path_max_buffer, const char* filename);
+extern const char* GetPathInDllDir(char* path_max_buffer, const char* filename);

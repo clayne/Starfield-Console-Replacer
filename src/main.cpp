@@ -23,7 +23,7 @@
 #include "../betterapi.h"
 
 
-extern "C" __declspec(dllexport) SFSEPluginVersionData SFSEPlugin_Version = {
+BC_DLLEXPORT SFSEPluginVersionData SFSEPlugin_Version = {
         1, // SFSE api version
         1, // Plugin version
         "BetterConsole",
@@ -35,7 +35,7 @@ extern "C" __declspec(dllexport) SFSEPluginVersionData SFSEPlugin_Version = {
         0, 0 //reserved fields
 };
 
-static void OnHotheyActivate(uintptr_t);
+static void OnHotkeyActivate(uintptr_t);
 static void SetupModMenu();
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -43,10 +43,10 @@ static HRESULT FAKE_ResizeBuffers(IDXGISwapChain3* This, UINT BufferCount, UINT 
 static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT PresentFlags);
 static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-static decltype(FAKE_ResizeBuffers)* OLD_ResizeBuffers = nullptr;
-static decltype(FAKE_Present)* OLD_Present = nullptr;
+//static decltype(FAKE_ResizeBuffers)* OLD_ResizeBuffers = nullptr;
+//static decltype(FAKE_Present)* OLD_Present = nullptr;
 static decltype(FAKE_Wndproc)* OLD_Wndproc = nullptr;
-
+static FUNC_PTR* SwapChainVTable = nullptr;
 
 static HINSTANCE self_module_handle = nullptr;
 static bool should_show_ui = false;
@@ -58,8 +58,8 @@ static bool setting_pause_on_ui_open = false;
 
 static char DLL_DIR[MAX_PATH]{};
 
-extern char* GetPathInDllDir(char* path_max_buffer, const char* filename) {
-        ASSERT(DLL_DIR[0] != '\0' && "a file was opened before dll dir was setup");
+extern const char* GetPathInDllDir(char* path_max_buffer, const char* filename) {
+        ASSERT(DLL_DIR[0] != '\0');
 
         char* p = path_max_buffer;
         
@@ -112,6 +112,11 @@ extern const ModMenuSettings* GetSettings() {
 }
 
 
+struct CPPObject {
+        FUNC_PTR* vTable;
+};
+
+
 #define MAX_QUEUES 4
 struct SwapChainQueue {
         ID3D12CommandQueue* Queue;
@@ -139,12 +144,17 @@ static HRESULT FAKE_CreateSwapChainForHwnd(
         IDXGIOutput* pRestrictToOutput,
         IDXGISwapChain1** ppSwapChain
 ) {
+        ASSERT(ppSwapChain != NULL);
+        DEBUG("*ppSwapCHain = %p", *ppSwapChain);
+
         auto ret = OLD_CreateSwapChainForHwnd(This, Device, hWnd, pDesc, pFullscreenDesc, pRestrictToOutput, ppSwapChain);
-        DEBUG("Factory: %p, Device: %p, HWND: %p, SwapChain: %p, Owner: %p, Ret: %X", This, Device, hWnd, *ppSwapChain, ppSwapChain, ret);
+        DEBUG("Factory: %p, Device: %p, HWND: %p, SwapChain: %p, Owner: %p -> Ret: %X", This, Device, hWnd, *ppSwapChain, ppSwapChain, ret);
 
         if (ret != S_OK) return ret;
 
-        ASSERT(ppSwapChain != NULL);
+        ASSERT(*ppSwapChain != NULL);
+
+        DEBUG("New Swapchain = %p", *ppSwapChain);
 
         bool swapchain_inserted = false;
         for (unsigned i = 0; i < MAX_QUEUES; ++i) {
@@ -191,8 +201,6 @@ static HRESULT FAKE_CreateSwapChainForHwnd(
                 DEBUG("FINAL STATE [%u]: CommandQueue: '%p', SwapChain: '%p', Age: %llu", i, Queues[i].Queue, Queues[i].SwapChain, Queues[i].Age);
         }
 
-
-        
         auto proc = (decltype(OLD_Wndproc))GetWindowLongPtrW(hWnd, GWLP_WNDPROC);
         if ((uint64_t)FAKE_Wndproc != (uint64_t)proc) {
                 OLD_Wndproc = proc;
@@ -220,69 +228,13 @@ static HRESULT FAKE_CreateSwapChainForHwnd(
                 ResizeBuffers,
         };
         
-        static void* vtable[128]; // 128 should be enough :)
-        
         static bool once = false;
         if (!once) {
                 once = true;
-
-                // I wish it didnt have to come to this, but it does.
-                // Steam overwrites the start of the IDXGISwapChain::Present
-                // function with a JMP to GameOverlayRenderer.dll so that it can
-                // render the steam overlay. RivaTuner aggressively replaces
-                // the same start of IDXGISwapChain::Present with a JMP to
-                // RTSS64.dll every frame to reassert dominance. then chainloads
-                // the original steam overlay hook.
-                // I need to hook IDXGISwapChain::Present too, so I hooked the
-                // virtual function table at the offset of Present.
-                // It should end there, but the Steam Overlay occasionally
-                // reasserts that its hooks are in place and the way it does
-                // that is to lookup the address of IDXGISwapChain::Present
-                // in the vtable - and it finds my hook.
-                // So Steam ends up overwriting my hook with a JMP to
-                // GameOverlayRenderer.dll that then redirects back to my Present
-                // that calls OLD_Present that was already hooked by steam or
-                // rivatuner, then BOOM! infinite loop.
-                // So now I need a hook that when the game calls present()
-                // its my hook, then rivatuner's aggressive hook, then steam
-                // overlay, then nvidia stramline native, then maybe eventually
-                // the original IDXGISwapChain::Present in dxgi.dll
-                // 
-                // This is the solution I came up with. Im just going to copy all
-                // the vtable functions from whatever IDXGISwapChain that this
-                // function just created, then replace the vtable pointer of
-                // every instance of IDXGISwapChain that comes down t   he line
-                // with the new vtable. Its silly but it works.
-
-                memcpy(vtable, **(void***)ppSwapChain, sizeof(vtable));
-
-                OLD_Present = (decltype(OLD_Present))vtable[Present];
-                vtable[Present] = (void*)FAKE_Present;
-
-                OLD_ResizeBuffers = (decltype(OLD_ResizeBuffers))vtable[ResizeBuffers];
-                vtable[ResizeBuffers] = (void*)FAKE_ResizeBuffers;
-
-                DEBUG("Hooked Present, OLD_Present: %p, NEW_Present: %p", OLD_Present, FAKE_Present);
-                DEBUG("Hooked ResizeBuffers, OLD_ResizeBuffers: %p, NEW_ResizeBuffers: %p", OLD_ResizeBuffers, FAKE_ResizeBuffers);
-
-                /*
-                OLD_Present = (decltype(OLD_Present))API.Hook->HookVirtualTable(
-                        *ppSwapChain,
-                        Present,
-                        (FUNC_PTR)FAKE_Present
-                );
-                DEBUG("Hooked Present, OLD_Present: %p, NEW_Present: %p", OLD_Present, FAKE_Present);
-                
-                OLD_ResizeBuffers = (decltype(OLD_ResizeBuffers))API.Hook->HookVirtualTable(
-                        *ppSwapChain,
-                        ResizeBuffers,
-                        (FUNC_PTR)FAKE_ResizeBuffers
-                );
-                */
+                const auto obj = (CPPObject*)*ppSwapChain;
+                DEBUG("ppSwapChain = %p, *ppSwapChain = %p, *ppSwapchain->vTable = %p, *ppSwapchain->vTable[Present] = %p", ppSwapChain, obj, obj->vTable, obj->vTable[Present]);
+                SwapChainVTable = obj->vTable;
         }
-
-        DEBUG("Hooked Swapchain: %p, replacing vtable: %p with: %p", *ppSwapChain, **(void***)ppSwapChain, vtable);
-        **(void***)ppSwapChain = vtable;
 
         return ret;
 }
@@ -374,15 +326,6 @@ UINT FAKE_GetRawInputData(HRAWINPUT hri, UINT cmd, LPVOID data, PUINT data_size,
 
 
 static void SetupModMenu() {
-        // use the directory of the betterconsole dll as the place to put other files
-        // NOTE: this needs to be done before any other file (logfile/config/console history) is opened
-        GetModuleFileNameA(self_module_handle, DLL_DIR, MAX_PATH);
-        char* n = DLL_DIR;
-        while (*n) ++n;
-        while ((n != DLL_DIR) && (*n != '\\')) --n;
-        ++n;
-        *n = 0;
-
         DEBUG("Initializing BetterConsole...");
         DEBUG("BetterConsole Version: " BETTERCONSOLE_VERSION);
         
@@ -426,10 +369,9 @@ static int OnBetterConsoleLoad(const struct better_api_t* api) {
         setup_console(api);
 
         //should the hotkeys code be an internal plugin too?
-
         const auto handle = api->Callback->RegisterMod("(internal)");
         api->Callback->RegisterConfigCallback(handle, Callback_Config);
-        api->Callback->RegisterHotkeyCallback(handle, OnHotheyActivate);
+        api->Callback->RegisterHotkeyCallback(handle, OnHotkeyActivate);
         
         //force hotkey for betterconsole default action using internal api
         HotkeyRequestNewHotkey(handle, "BetterConsole", 0, VK_F1);
@@ -439,14 +381,77 @@ static int OnBetterConsoleLoad(const struct better_api_t* api) {
         return 0;
 }
 
+static HRESULT (*OLD_D3D11On12CreateDevice)(
+        IUnknown* pDevice,
+        UINT Flags,
+        CONST D3D_FEATURE_LEVEL* pFeatureLevels,
+        UINT FeatureLevels,
+        IUnknown* CONST* ppCommandQueues,
+        UINT NumQueues,
+        UINT NodeMask,
+        void** ppDevice,
+        void** ppImmediateContext,
+        D3D_FEATURE_LEVEL* pChosenFeatureLevel) = nullptr;
+
+static HRESULT WINAPI FAKE_D3D11On12CreateDevice(
+        IUnknown* pDevice,
+        UINT Flags,
+        CONST D3D_FEATURE_LEVEL* pFeatureLevels,
+        UINT FeatureLevels,
+        IUnknown* CONST* ppCommandQueues,
+        UINT NumQueues,
+        UINT NodeMask,
+        void** ppDevice,
+        void** ppImmediateContext,
+        D3D_FEATURE_LEVEL* pChosenFeatureLevel) {
+        DEBUG("Device = %p", pDevice);
+        DEBUG("Flags = %X", Flags);
+        DEBUG("FeatureLevels = %u", FeatureLevels);
+        for (unsigned i = 0; i < FeatureLevels; ++i) {
+                DEBUG("[%u] %X", i, pFeatureLevels[i]);
+        }
+        DEBUG("NumQueues = %u", NumQueues);
+        for (unsigned i = 0; i < NumQueues; ++i) {
+                DEBUG("[%u] %p", i, ppCommandQueues[i]);
+        }
+        DEBUG("NodeMask = %u", NodeMask);
+        auto ret = OLD_D3D11On12CreateDevice(
+                pDevice,
+                Flags,
+                pFeatureLevels,
+                FeatureLevels,
+                ppCommandQueues,
+                NumQueues,
+                NodeMask,
+                ppDevice,
+                ppImmediateContext,
+                pChosenFeatureLevel);
+        DEBUG("*ppDevice = %p", *ppDevice);
+        DEBUG("*ppImmediateContext = %p", *ppImmediateContext);
+        if (pChosenFeatureLevel) {
+                DEBUG("*pChosenFeatureLevel = %u", *pChosenFeatureLevel);
+        }
+        return ret;
+}
+
+#include <d3d11on12.h>
+
 extern "C" BOOL WINAPI DllMain(HINSTANCE self, DWORD fdwReason, LPVOID) {
         if (fdwReason == DLL_PROCESS_ATTACH) {
                 /* lock the linker/dll loader until hooks are installed, TODO: make sure this code path is fast */
                 static bool RunHooksOnlyOnce = true;
                 ASSERT(RunHooksOnlyOnce == true); //i want to know if this assert ever gets triggered
                 //while (!IsDebuggerPresent()) Sleep(100);
- 
-                self_module_handle = self;
+
+                // get the path of the current DLL and save it in a buffer for use later
+                // most file functions (like logging) need to work with a file in the same folder as the betterconsole dl
+                // so we need to do this very early - its the first function call of dllmain()
+                GetModuleFileNameA(self, DLL_DIR, MAX_PATH);
+                char* n = DLL_DIR;
+                while (*n) ++n;
+                while ((n != DLL_DIR) && (*n != '\\')) --n;
+                ++n;
+                *n = 0;
 
                 // just hook this one function the game needs to display graphics, then lazy hook the rest when it's called later
                 OLD_CreateDXGIFactory2 = (decltype(OLD_CreateDXGIFactory2))API.Hook->HookFunctionIAT("sl.interposer.dll", "CreateDXGIFactory2", (FUNC_PTR)FAKE_CreateDXGIFactory2);
@@ -455,23 +460,16 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE self, DWORD fdwReason, LPVOID) {
                 }
                 ASSERT(OLD_CreateDXGIFactory2 != NULL);
 
+                OLD_D3D11On12CreateDevice = (decltype(OLD_D3D11On12CreateDevice))API.Hook->HookFunction((FUNC_PTR)D3D11On12CreateDevice, (FUNC_PTR)FAKE_D3D11On12CreateDevice);
+
                 RunHooksOnlyOnce = false;
         }
         return TRUE;
 }
 
 
-static HRESULT FAKE_ResizeBuffers(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
-        if (should_show_ui) {
-                DX11_ReleaseIfInitialized();
-        }
-        DEBUG("ResizeBuffers: %p, BufferCount: %u, Width: %u, Height: %u, NewFormat: %u", This, BufferCount, Width, Height, NewFormat);
-        return OLD_ResizeBuffers(This, BufferCount, Width, Height, NewFormat, SwapChainFlags);
-}
-
-
 static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT PresentFlags) {
-        if (EveryNFrames(240)) {
+        if (EveryNFrames(300)) {
                 DEBUG("render heartbeat, showing ui: %s", (should_show_ui)? "true" : "false");
         }
 
@@ -480,7 +478,6 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
 
         SwapChainQueue* best_match = nullptr;
         for (uint32_t i = 0; i < MAX_QUEUES; ++i) {
-                //DEBUG("SEARCH [%u]: CommandQueue: '%p', SwapChain: '%p', Age: %u, Match: %s", i, Queues[i].Queue, Queues[i].SwapChain, Queues[i].Age, (Queues[i].SwapChain == This) ? "True" : "False");
                 if (Queues[i].SwapChain == This) {
                         if (best_match == nullptr || Queues[i].Age < best_match->Age) {
                                 best_match = &Queues[i];
@@ -488,7 +485,6 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
                 }
         }
         ASSERT(best_match != nullptr);
-        //DEBUG("BEST MATCH: CommandQueue: '%p', SwapChain: '%p', Age: %u", best_match->Queue, best_match->SwapChain, best_match->Age);
         
         if (command_queue != best_match->Queue) {
                 command_queue = best_match->Queue;
@@ -497,6 +493,7 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
 
 
         if (last_swapchain != This) {
+                DEBUG("Swapchain Change: OLD = %p, NEW = %p, commandqueue = %p", last_swapchain, This, command_queue);
                 last_swapchain = This;
                 DX11_ReleaseIfInitialized();
         }
@@ -506,31 +503,18 @@ static HRESULT FAKE_Present(IDXGISwapChain3* This, UINT SyncInterval, UINT Prese
                 DX11_InitializeOrRender(This, command_queue);
         }
         else {
+                //should i need this?
                 DX11_ReleaseIfInitialized();
         }
 
-
-        // keep this detection code in place to detect breaking changes to the hook causing recursive nightmare
-        static unsigned loop_check = 0;
-        ASSERT((loop_check == 0) && "recursive hook detected");
-        ++loop_check;
-        auto ret = OLD_Present(This, SyncInterval, PresentFlags);
-        if (ret == DXGI_ERROR_DEVICE_REMOVED || ret == DXGI_ERROR_DEVICE_RESET) {
-                DEBUG("DXGI_ERROR_DEVICE_REMOVED || DXGI_ERROR_DEVICE_RESET");
-                //DX11_ReleaseIfInitialized();
-        } else if (ret != S_OK) {
-                DEBUG("Swapchain::Present returned error: %u", ret);
-        }
-        --loop_check;
-
-        return ret;
+        return DX11_CallPresent(This, SyncInterval, PresentFlags);
 }
 
 
 static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         static HWND last_window_handle = nullptr;
 
-        if (EveryNFrames(600)) {
+        if (EveryNFrames(300)) {
                 DEBUG("input heartbeat");
         }
 
@@ -550,7 +534,7 @@ static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         if (!OLD_GetRawInputData && uMsg == WM_KEYDOWN) {
                 // allow toggling the ui in the test renderer
                 if (wParam == VK_F1) {
-                        OnHotheyActivate(0);
+                        OnHotkeyActivate(0);
                 }
 
                 if (wParam == VK_F2) {
@@ -573,9 +557,18 @@ static LRESULT FAKE_Wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         return CallWindowProcW(OLD_Wndproc, hWnd, uMsg, wParam, lParam);
 }
 
-static void OnHotheyActivate(uintptr_t) {
+
+static void OnHotkeyActivate(uintptr_t) {
         should_show_ui = !should_show_ui;
-        DEBUG("ui toggled");
+        DEBUG("ui toggled, Showing ui %s", (should_show_ui)? "True" : "False");
+
+        static bool hooks_installed = false;
+        if (!hooks_installed) {
+                hooks_installed = true;
+
+                DX11_InstallSwapChainHooks((void**)SwapChainVTable, FAKE_Present);
+                DEBUG("DirectX Hooks installed");
+        }
 
         if (setting_pause_on_ui_open) {
                 GetGameHookAPI()->SetGamePaused(should_show_ui);

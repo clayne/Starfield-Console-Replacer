@@ -6,6 +6,7 @@
 #include "main.h"
 #include "gui.h"
 #include "d3d11on12ui.h"
+#include "hook_api.h"
 
 #include "../imgui/imgui_impl_dx11.h"
 #include "../imgui/imgui_impl_win32.h"
@@ -22,6 +23,7 @@ static ID3D11On12Device* g_d3d11on12device{ nullptr };
 
 static unsigned g_buffercount{ 0 };
 static bool g_initialized = false;
+static const auto Hook{ GetHookAPI() };
 
 static void DX11_Initialize(void* dx12_swapchain, void* dx12_commandqueue) {
         ASSERT(g_initialized == false);
@@ -197,4 +199,86 @@ extern void DX11_ReleaseIfInitialized() {
         }
 
         g_initialized = false;
+}
+
+
+static HRESULT(*OLD_ResizeBuffers)(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) = nullptr;
+static HRESULT(*OLD_Present)(IDXGISwapChain3* This, UINT SyncInterval, UINT PresentFlags) = nullptr;
+
+static HRESULT FAKE_ResizeBuffers(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
+        DX11_ReleaseIfInitialized();
+        const auto ret = OLD_ResizeBuffers(This, BufferCount, Width, Height, NewFormat, SwapChainFlags);
+        DEBUG("ResizeBuffers: Swapchain: %p, BufferCount: %u, Width: %u, Height: %u, NewFormat: %u -> Ret: %X", This, BufferCount, Width, Height, NewFormat, ret);
+        return ret;
+}
+
+static FUNC_PTR follow_function_hook(FUNC_PTR func) {
+        const auto bytes = (const unsigned char*)func;
+        
+        uint8_t first_byte = 0;
+        uint32_t jmp_displacement = 0;
+
+        ReadProcessMemory(GetCurrentProcess(), bytes, &first_byte, 1, NULL);
+        ReadProcessMemory(GetCurrentProcess(), bytes + 1, &jmp_displacement, 1, NULL);
+
+        if (first_byte == 0xE9) { // if JMP instruction
+                const auto hook = (FUNC_PTR)(bytes + jmp_displacement + 5 /* 0xE9 is a 5 byte instruction */);
+                DEBUG("function %p is hooked, following hook to address %p", func, hook);
+                return follow_function_hook(hook);
+        }
+
+        DEBUG("function %p is not hooked, placing hook", func);
+        return func;
+}
+
+extern void DX11_InstallSwapChainHooks(void** dx12_swapchain_vtable, void* fake_present) {
+        enum : unsigned {
+                QueryInterface,
+                AddRef,
+                Release,
+                GetPrivateData,
+                SetPrivateData,
+                SetPrivateDataInterface,
+                GetParent,
+                GetDevice,
+                Present,
+                GetBuffer,
+                SetFullscreenState,
+                GetFullscreenState,
+                GetDesc,
+                ResizeBuffers,
+        };
+
+        static bool once = false;
+        if (!once) {
+                once = true;
+                DEBUG("Installing DirectX Hooks");
+                OLD_Present = (decltype(OLD_Present))Hook->HookFunction(follow_function_hook((FUNC_PTR)dx12_swapchain_vtable[Present]), (FUNC_PTR)fake_present);
+                OLD_ResizeBuffers = (decltype(OLD_ResizeBuffers))Hook->HookFunction(follow_function_hook((FUNC_PTR)dx12_swapchain_vtable[ResizeBuffers]), (FUNC_PTR)FAKE_ResizeBuffers);
+        }
+}
+
+
+extern void DX11_RemoveSwapChainHooks(void** dx12_swapchain_vtable) {
+
+}
+
+extern HRESULT DX11_CallPresent(void* dx12_swapchain, uint32_t sync_interval, uint32_t present_flags) {
+        // keep this detection code in place to detect breaking changes to the hook causing recursive nightmare
+        static unsigned loop_check = 0;
+        ASSERT((loop_check == 0) && "recursive hook detected");
+        ++loop_check;
+        auto ret = OLD_Present((IDXGISwapChain3*)dx12_swapchain, sync_interval, present_flags);
+        if (ret == DXGI_ERROR_DEVICE_REMOVED || ret == DXGI_ERROR_DEVICE_RESET) {
+                DEBUG("DXGI_ERROR_DEVICE_REMOVED || DXGI_ERROR_DEVICE_RESET");
+        }
+        else if (ret != S_OK) {
+                DEBUG("Swapchain::Present returned error: %u", ret);
+        }
+        --loop_check;
+
+        //DEBUG("Frame Rendered");
+        DebugFrameFinished();
+
+        return ret;
 }
